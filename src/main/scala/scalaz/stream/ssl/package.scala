@@ -97,18 +97,26 @@ package object ssl {
         }
     }
     
-    def send(outgoingBytes: Bytes): Writer1[Bytes, Bytes, Bytes] = 
-      if(outgoingBytes.isEmpty)
-        await1[Bytes].flatMap(wrap(_)).flatMap {
-          case (remaining, possibleOutput) =>
-            possibleOutput.fold[Writer[Nothing, Bytes, Nothing]](halt)(emitW(_)) fby send(remaining)
+    def send(outgoingBytes: Bytes): Writer1[Bytes, Bytes, Bytes] = engine.getHandshakeStatus match {
+      case NEED_TASK => 
+        engine.getDelegatedTask().run()
+        send(outgoingBytes) 
+      case NEED_WRAP if outgoingBytes.isEmpty =>
+        wrap(Bytes.empty).flatMap {
+          case (_, possibleOutput) =>
+            possibleOutput.fold[Writer[Nothing, Bytes, Nothing]](halt)(emitW(_)) fby send(outgoingBytes)
         }
-      else
+      case _ if !outgoingBytes.isEmpty =>
         wrap(outgoingBytes).flatMap {
           case (remaining, possibleOutput) =>
             possibleOutput.fold[Writer[Nothing, Bytes, Nothing]](halt)(emitW(_)) fby send(remaining)
         }
-        
+      case _ => 
+        await1[Bytes].flatMap(wrap(_)).flatMap {
+          case (remaining, possibleOutput) =>
+            possibleOutput.fold[Writer[Nothing, Bytes, Nothing]](halt)(emitW(_)) fby send(remaining)
+        }
+    } 
         
 
     def sendAndReceive(incomingBytes: Bytes, outgoingBytes: Bytes): WyeW[Bytes, Bytes, Bytes, Bytes] = wye.merge[Bytes \/ Bytes].attachL(receive(incomingBytes)).attachR(send(outgoingBytes))
